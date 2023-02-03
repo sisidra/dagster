@@ -1,3 +1,5 @@
+import inspect
+import os
 from functools import lru_cache, update_wrapper
 from inspect import Parameter
 from typing import (
@@ -78,6 +80,15 @@ class _Op:
         if not self.name:
             self.name = fn.__name__
 
+        tags = self.tags or {}
+
+        if os.getenv("DAGSTER_ENABLE_CODE_LINKS", "false").lower() == "true":
+            cwd = os.getcwd()
+            origin_file = os.path.join(cwd, inspect.getsourcefile(fn))
+            origin_line = inspect.getsourcelines(fn)[1]
+
+            tags = {**(tags), "__code_origin": f"{origin_file}:{origin_line}"}
+
         compute_fn = (
             DecoratedOpFunction(decorated_fn=fn)
             if self.decorator_takes_context
@@ -125,7 +136,7 @@ class _Op:
             config_schema=self.config_schema,
             description=self.description or format_docstring_for_description(fn),
             required_resource_keys=resolved_resource_keys,
-            tags=self.tags,
+            tags=tags,
             code_version=self.code_version,
             retry_policy=self.retry_policy,
         )
