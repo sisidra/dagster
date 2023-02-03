@@ -224,6 +224,9 @@ class DagitWebserver(GraphQLServer, Generic[T_IWorkspaceProcessContext]):
                     .replace(
                         '"__TELEMETRY_ENABLED__"', str(context.instance.telemetry_enabled).lower()
                     )
+                    .replace(
+                        '"__CODE_LINKS_ENABLED__"', str(context.instance.code_links_enabled).lower()
+                    )
                     .replace("NONCE-PLACEHOLDER", nonce),
                     headers=headers,
                 )
