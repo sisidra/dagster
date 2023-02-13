@@ -36,7 +36,7 @@ from ..asset_in import AssetIn
 from ..asset_out import AssetOut
 from ..assets import AssetsDefinition
 from ..decorators.graph_decorator import graph
-from ..decorators.op_decorator import _Op
+from ..decorators.op_decorator import CODE_ORIGIN_TAG_NAME, _Op
 from ..events import AssetKey, CoercibleToAssetKeyPrefix
 from ..input import In
 from ..output import GraphOut, Out
@@ -273,17 +273,10 @@ class _Asset:
 
         asset_ins = build_asset_ins(fn, self.ins or {}, self.non_argument_deps)
 
-        metadata = self.metadata or {}
-
         # Attach code origins as metadata to the asset
         cwd = os.getcwd()
         origin_file = os.path.join(cwd, inspect.getsourcefile(fn))
         origin_line = inspect.getsourcelines(fn)[1]
-
-        metadata = {
-            **(metadata),
-            "__code_origin": MetadataValue.json({"file": origin_file, "line": origin_line}),
-        }
 
         out_asset_key = AssetKey(list(filter(None, [*(self.key_prefix or []), asset_name])))
         with warnings.catch_warnings():
@@ -315,7 +308,7 @@ class _Asset:
                 io_manager_key = DEFAULT_IO_MANAGER_KEY
 
             out = Out(
-                metadata=metadata,
+                metadata=self.metadata or {},
                 io_manager_key=io_manager_key,
                 dagster_type=self.dagster_type if self.dagster_type else NoValueSentinel,
                 description=self.description,
@@ -336,6 +329,9 @@ class _Asset:
                 tags={
                     **({"kind": self.compute_kind} if self.compute_kind else {}),
                     **(self.op_tags or {}),
+                    CODE_ORIGIN_TAG_NAME: MetadataValue.json(
+                        {"file": origin_file, "line": origin_line}
+                    ),
                 },
                 config_schema=self.config_schema,
                 retry_policy=self.retry_policy,
