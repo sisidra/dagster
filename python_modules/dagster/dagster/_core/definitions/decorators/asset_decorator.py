@@ -275,15 +275,15 @@ class _Asset:
 
         metadata = self.metadata or {}
 
-        if os.getenv("DAGSTER_ENABLE_CODE_LINKS", "false").lower() == "true":
-            cwd = os.getcwd()
-            origin_file = os.path.join(cwd, inspect.getsourcefile(fn))
-            origin_line = inspect.getsourcelines(fn)[1]
+        # Attach code origins as metadata to the asset
+        cwd = os.getcwd()
+        origin_file = os.path.join(cwd, inspect.getsourcefile(fn))
+        origin_line = inspect.getsourcelines(fn)[1]
 
-            metadata = {
-                **(metadata),
-                "__code_origin": MetadataValue.json({"file": origin_file, "line": origin_line}),
-            }
+        metadata = {
+            **(metadata),
+            "__code_origin": MetadataValue.json({"file": origin_file, "line": origin_line}),
+        }
 
         out_asset_key = AssetKey(list(filter(None, [*(self.key_prefix or []), asset_name])))
         with warnings.catch_warnings():

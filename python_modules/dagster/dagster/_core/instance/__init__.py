@@ -717,7 +717,8 @@ class DagsterInstance(DynamicPartitionsStore):
 
     @property
     def code_links_enabled(self) -> bool:
-        return os.getenv("DAGSTER_ENABLE_CODE_LINKS", "false").lower() == "true"
+        code_links_settings = cast(Dict[str, Any], self.get_settings("code_links"))
+        return code_links_settings.get("enabled", False) is True
 
     @property
     def telemetry_enabled(self) -> bool:

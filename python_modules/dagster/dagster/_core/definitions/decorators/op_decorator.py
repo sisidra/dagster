@@ -82,12 +82,12 @@ class _Op:
 
         tags = self.tags or {}
 
-        if os.getenv("DAGSTER_ENABLE_CODE_LINKS", "false").lower() == "true":
-            cwd = os.getcwd()
-            origin_file = os.path.join(cwd, inspect.getsourcefile(fn))
-            origin_line = inspect.getsourcelines(fn)[1]
+        # Attach code origin to op tags
+        cwd = os.getcwd()
+        origin_file = os.path.join(cwd, inspect.getsourcefile(fn))
+        origin_line = inspect.getsourcelines(fn)[1]
 
-            tags = {**(tags), "__code_origin": f"{origin_file}:{origin_line}"}
+        tags = {**(tags), "__code_origin": f"{origin_file}:{origin_line}"}
 
         compute_fn = (
             DecoratedOpFunction(decorated_fn=fn)
