@@ -1,7 +1,8 @@
+import inspect
+
 from dagster import job, op
 from dagster._core.definitions.decorators.op_decorator import CODE_ORIGIN_TAG_NAME
 from dagster._utils import file_relative_path
-import inspect
 
 
 def _code_origin_tag(line_no: int) -> str:
