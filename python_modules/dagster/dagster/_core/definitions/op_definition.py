@@ -124,6 +124,7 @@ class OpDefinition(NodeDefinition):
         version: Optional[str] = None,
         retry_policy: Optional[RetryPolicy] = None,
         code_version: Optional[str] = None,
+        resource_key_argument_mapping: Optional[Mapping[str, str]] = None,
     ):
         from .decorators.op_decorator import DecoratedOpFunction, resolve_checked_solid_fn_inputs
 
@@ -175,6 +176,8 @@ class OpDefinition(NodeDefinition):
             tags=check.opt_mapping_param(tags, "tags", key_type=str),
             positional_inputs=positional_inputs,
         )
+
+        self._resource_key_argument_mapping = resource_key_argument_mapping
 
     @property
     def node_type_str(self) -> str:

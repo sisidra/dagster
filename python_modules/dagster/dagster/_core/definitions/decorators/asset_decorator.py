@@ -62,6 +62,7 @@ def asset(
     description: Optional[str] = ...,
     config_schema: Optional[UserConfigSchema] = None,
     required_resource_keys: Optional[Set[str]] = ...,
+    resource_key_argument_mapping: Optional[Dict[str, str]] = ...,
     resource_defs: Optional[Mapping[str, ResourceDefinition]] = ...,
     io_manager_def: Optional[IOManagerDefinition] = ...,
     io_manager_key: Optional[str] = ...,
@@ -89,6 +90,7 @@ def asset(
     description: Optional[str] = None,
     config_schema: Optional[UserConfigSchema] = None,
     required_resource_keys: Optional[Set[str]] = None,
+    resource_key_argument_mapping: Optional[Dict[str, str]] = None,
     resource_defs: Optional[Mapping[str, ResourceDefinition]] = None,
     io_manager_def: Optional[IOManagerDefinition] = None,
     io_manager_key: Optional[str] = None,
@@ -183,6 +185,7 @@ def asset(
             description=description,
             config_schema=config_schema,
             required_resource_keys=required_resource_keys,
+            resource_key_argument_mapping=resource_key_argument_mapping,
             resource_defs=resource_defs,
             io_manager=io_manager_def or io_manager_key,
             compute_kind=check.opt_str_param(compute_kind, "compute_kind"),
@@ -229,6 +232,7 @@ class _Asset:
         description: Optional[str] = None,
         config_schema: Optional[UserConfigSchema] = None,
         required_resource_keys: Optional[Set[str]] = None,
+        resource_key_argument_mapping: Optional[Mapping[str, str]] = None,
         resource_defs: Optional[Mapping[str, ResourceDefinition]] = None,
         io_manager: Optional[Union[str, IOManagerDefinition]] = None,
         compute_kind: Optional[str] = None,
@@ -264,6 +268,12 @@ class _Asset:
         self.output_required = output_required
         self.freshness_policy = freshness_policy
         self.retry_policy = retry_policy
+        self.resource_key_argument_mapping = resource_key_argument_mapping
+        self.argument_resource_key_mapping = (
+            {v: k for k, v in resource_key_argument_mapping.items()}
+            if resource_key_argument_mapping
+            else None
+        )
         self.code_version = code_version
 
     def __call__(self, fn: Callable) -> AssetsDefinition:
@@ -276,6 +286,11 @@ class _Asset:
             warnings.simplefilter("ignore", category=ExperimentalWarning)
 
             arg_resource_keys = {arg.name for arg in get_resource_args(fn)}
+            if self.argument_resource_key_mapping:
+                arg_resource_keys = {
+                    self.argument_resource_key_mapping.get(arg, arg) for arg in arg_resource_keys
+                }
+
             decorator_resource_keys = set(self.required_resource_keys).union(
                 set(self.resource_defs.keys())
             )
@@ -322,6 +337,7 @@ class _Asset:
                 config_schema=self.config_schema,
                 retry_policy=self.retry_policy,
                 code_version=self.code_version,
+                resource_key_argument_mapping=self.resource_key_argument_mapping,
             )(fn)
 
         keys_by_input_name = {

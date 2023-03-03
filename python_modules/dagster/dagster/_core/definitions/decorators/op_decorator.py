@@ -52,6 +52,7 @@ class _Op:
         retry_policy: Optional[RetryPolicy] = None,
         ins: Optional[Mapping[str, In]] = None,
         out: Optional[Union[Out, Mapping[str, Out]]] = None,
+        resource_key_argument_mapping: Optional[Mapping[str, str]] = None,
     ):
         self.name = check.opt_str_param(name, "name")
         self.decorator_takes_context = check.bool_param(
@@ -71,6 +72,12 @@ class _Op:
 
         self.ins = check.opt_nullable_mapping_param(ins, "ins", key_type=str, value_type=In)
         self.out = out
+        self.resource_key_argument_mapping = resource_key_argument_mapping
+        self.argument_resource_key_mapping = (
+            {v: k for k, v in resource_key_argument_mapping.items()}
+            if resource_key_argument_mapping
+            else None
+        )
 
     def __call__(self, fn: Callable[..., Any]) -> "OpDefinition":
         from ..op_definition import OpDefinition
@@ -107,6 +114,11 @@ class _Op:
             outs = check.mapping_param(self.out, "out", key_type=str, value_type=Out)
 
         arg_resource_keys = {arg.name for arg in compute_fn.get_resource_args()}
+        if self.argument_resource_key_mapping:
+            arg_resource_keys = {
+                self.argument_resource_key_mapping.get(arg, arg) for arg in arg_resource_keys
+            }
+
         decorator_resource_keys = set(self.required_resource_keys or [])
         check.param_invariant(
             len(decorator_resource_keys) == 0 or len(arg_resource_keys) == 0,
@@ -128,6 +140,7 @@ class _Op:
             tags=self.tags,
             code_version=self.code_version,
             retry_policy=self.retry_policy,
+            resource_key_argument_mapping=self.resource_key_argument_mapping,
         )
         update_wrapper(op_def, compute_fn.decorated_fn)
         return op_def
@@ -147,6 +160,7 @@ def op(
     out: Optional[Union[Out, Mapping[str, Out]]] = ...,
     config_schema: Optional[UserConfigSchema] = ...,
     required_resource_keys: Optional[Set[str]] = ...,
+    resource_key_argument_mapping: Optional[Mapping[str, str]] = ...,
     tags: Optional[Mapping[str, Any]] = ...,
     version: Optional[str] = ...,
     retry_policy: Optional[RetryPolicy] = ...,
@@ -164,6 +178,7 @@ def op(
     out: Optional[Union[Out, Mapping[str, Out]]] = None,
     config_schema: Optional[UserConfigSchema] = None,
     required_resource_keys: Optional[Set[str]] = None,
+    resource_key_argument_mapping: Optional[Mapping[str, str]] = None,
     tags: Optional[Mapping[str, Any]] = None,
     version: Optional[str] = None,
     retry_policy: Optional[RetryPolicy] = None,
@@ -259,6 +274,7 @@ def op(
         retry_policy=retry_policy,
         ins=ins,
         out=out,
+        resource_key_argument_mapping=resource_key_argument_mapping,
     )
 
 
