@@ -31,8 +31,10 @@ export const SidebarOpInvocation: React.FC<ISidebarOpInvocationProps> = (props) 
     <div>
       <SidebarSection title="Invocation">
         <Box padding={{vertical: 16, horizontal: 24}}>
-          <SidebarTitle>{breakOnUnderscores(solid.name)}</SidebarTitle>
-          {codeLink}
+          <Box flex={{direction: 'row', gap: 4, justifyContent: 'space-between'}}>
+            <SidebarTitle>{breakOnUnderscores(solid.name)}</SidebarTitle>
+            {codeLink}
+          </Box>
           {showInputs || showOutputs ? (
             <DependencyTable>
               <tbody>

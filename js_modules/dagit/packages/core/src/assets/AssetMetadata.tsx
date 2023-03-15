@@ -13,9 +13,7 @@ export const metadataForAssetNode = (
   assetNode: AssetNodeOpMetadataFragment,
 ): {assetType?: DagsterTypeFragment; assetMetadata: MetadataEntryFragment[]} => {
   const assetType = assetNode.type ? assetNode.type : undefined;
-  const assetMetadata = (assetNode.metadataEntries || []).filter(
-    (entry) => entry.label !== '__code_origin',
-  );
+  const assetMetadata = assetNode.metadataEntries || [];
   return {assetType, assetMetadata};
 };
 
