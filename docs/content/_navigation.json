@@ -11,7 +11,8 @@
       },
       {
         "title": "Installation",
-        "path": "/getting-started/install"
+        "path": "/getting-started/install",
+        "nonMdx": true
       },
       {
         "title": "Create a New Project",
@@ -750,8 +751,8 @@
             "path": "/guides/dagster/recommended-project-structure"
           },
           {
-          "title": "Building machine learning pipelines",
-          "path": "/guides/dagster/ml-pipeline"
+            "title": "Building machine learning pipelines",
+            "path": "/guides/dagster/ml-pipeline"
           },
           {
             "title": "Using environment variables and secrets",
