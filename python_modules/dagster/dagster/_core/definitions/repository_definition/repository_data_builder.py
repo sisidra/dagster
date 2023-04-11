@@ -80,7 +80,9 @@ def _env_vars_from_resource_defaults(resource_def: ResourceDefinition) -> Set[st
     if isinstance(resource_def, ResourceWithKeyMapping) and isinstance(
         resource_def.inner_resource, (ConfigurableResource, PartialResource)
     ):
-        nested_resources = separate_resource_params(resource_def.inner_resource.__dict__).resources
+        nested_resources = separate_resource_params(
+            resource_def.inner_resource.__class__, resource_def.inner_resource.__dict__
+        ).resources
         for nested_resource in nested_resources.values():
             env_vars = env_vars.union(_env_vars_from_resource_defaults(nested_resource))
 

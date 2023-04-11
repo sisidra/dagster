@@ -731,7 +731,7 @@ def test_resources_which_return():
     assert completed["yes"]
 
 
-def test_nested_function_resource():
+def test_nested_function_resource22():
     out_txt = []
 
     @resource
@@ -2446,6 +2446,8 @@ def test_from_resource_context_and_to_config_empty() -> None:
         return NoConfigResource.from_resource_context(context).get_string()
 
     assert string_resource_function_style(build_init_resource_context()) == "foo"
+
+
 def test_structured_resource_partial_config() -> None:
     out_txt = []
 

@@ -9,6 +9,8 @@ from .utils import safe_is_subclass
 if TYPE_CHECKING:
     from dagster._config.pythonic_config import PartialResource
 
+from typing_extensions import Annotated
+
 
 # Since a metaclass is invoked by Resource before Resource or PartialResource is defined, we need to
 # define a temporary class to use as a placeholder for use in the initial metaclass invocation.
@@ -86,7 +88,7 @@ class BaseResourceMeta(pydantic.main.ModelMetaclass):
                     # arg = get_args(annotations[field])[0]
                     # If so, we treat it as a Union of a PartialResource and a Resource
                     # for Pydantic's sake.
-                    annotations[field] = Any
+                    annotations[field] = Annotated[Any, "resource_dependency"]
                 elif safe_is_subclass(
                     annotations[field], LateBoundTypesForResourceTypeChecking.get_resource_type()
                 ):
