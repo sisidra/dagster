@@ -178,16 +178,23 @@ class PermissiveConfig(Config):
     """
 
 
-def _recursively_apply_field_defaults(old_field: Field, additional_default_values: Any) -> Field:
+def _apply_defaults_to_schema_field(old_field: Field, additional_default_values: Any) -> Field:
+    """Given a config Field and a set of default values (usually a dictionary or raw default value),
+    return a new Field with the default values applied to it (and recursively to any sub-fields).
+    """
+    # If the field has subfields and the default value is a dictionary, iterate
+    # over the subfields and apply the defaults to them.
     if isinstance(old_field.config_type, _ConfigHasFields) and isinstance(
         additional_default_values, dict
     ):
         updated_sub_fields = {
-            k: _recursively_apply_field_defaults(
+            k: _apply_defaults_to_schema_field(
                 sub_field, additional_default_values.get(k, FIELD_NO_DEFAULT_PROVIDED)
             )
             for k, sub_field in old_field.config_type.fields.items()
         }
+
+        # We also apply a new default value to the field if all of its subfields have defaults
         new_default = (
             old_field.default_value if old_field.default_provided else FIELD_NO_DEFAULT_PROVIDED
         )
@@ -210,26 +217,11 @@ def _recursively_apply_field_defaults(old_field: Field, additional_default_value
         return copy_with_default(old_field, additional_default_values)
 
 
-# This is from https://github.com/dagster-io/dagster/pull/11470
-def _apply_defaults_to_schema_field(field: Field, additional_default_values: Any) -> Field:
-    # This work by validating the top-level config and then
-    # just setting it at that top-level field. Config fields
-    # can actually take nested values so we only need to set it
-    # at a single level
-
-    # evr = validate_config(field.config_type, additional_default_values)
-
-    # if not evr.success:
-    #     raise DagsterInvalidConfigError(
-    #         "Incorrect values passed to .configured",
-    #         evr.errors,
-    #         additional_default_values,
-    #     )
-
-    return _recursively_apply_field_defaults(field, additional_default_values)
-
-
 def copy_with_default(old_field: Field, new_config_value: Any) -> Field:
+    """Copies a Field, but replaces the default value with the provided value.
+    Also updates the is_required flag depending on whether the new config value is
+    actually specified.
+    """
     return Field(
         config=old_field.config_type,
         default_value=old_field.default_value
@@ -281,6 +273,11 @@ def _resolve_required_resource_keys_for_resource(
     return resource.required_resource_keys
 
 
+class SeparatedResourceParams(NamedTuple):
+    resources: Dict[str, Any]
+    non_resources: Dict[str, Any]
+
+
 class AllowDelayedDependencies:
     _nested_partial_resources: Mapping[str, ResourceDefinition] = {}
 
@@ -309,7 +306,7 @@ class AllowDelayedDependencies:
                 _resolve_required_resource_keys_for_resource(v, resource_mapping)
             )
 
-        resources, _ = separate_resource_params(self.__class__, self.__dict__)
+        resources, _ = self.separate_resource_params(self.__dict__)
         for v in resources.values():
             nested_resource_required_keys.update(
                 _resolve_required_resource_keys_for_resource(v, resource_mapping)
@@ -319,6 +316,10 @@ class AllowDelayedDependencies:
             nested_resource_required_keys
         )
         return out
+
+    @abstractmethod
+    def separate_resource_params(self, data: Dict[str, Any]) -> SeparatedResourceParams:
+        raise NotImplementedError()
 
 
 class InitResourceContextWithKeyMapping(InitResourceContext):
@@ -484,7 +485,7 @@ class ConfigurableResourceFactory(
     """
 
     def __init__(self, **data: Any):
-        resource_pointers, data_without_resources = separate_resource_params(self.__class__, data)
+        resource_pointers, data_without_resources = self.separate_resource_params(data)
 
         schema = infer_schema_from_config_class(
             self.__class__, fields_to_omit=set(resource_pointers.keys())
@@ -601,7 +602,7 @@ class ConfigurableResourceFactory(
             }
 
         # Also evaluate any resources that are not partial
-        resources_to_update, _ = separate_resource_params(self.__class__, self.__dict__)
+        resources_to_update, _ = self.separate_resource_params(self.__dict__)
         resources_to_update = {
             attr_name: _call_resource_fn_with_default(resource_def, context)
             for attr_name, resource_def in resources_to_update.items()
@@ -639,6 +640,26 @@ class ConfigurableResourceFactory(
 
         """
         return cls(**context.resource_config or {}).create_resource(context)
+
+    @classmethod
+    def separate_resource_params_on_cls(cls, data: Dict[str, Any]) -> SeparatedResourceParams:
+        """Separates out the key/value inputs of fields in a structured config Resource class which
+        are themselves Resources and those which are not.
+        """
+        resources = {}
+        non_resources = {}
+        for k, v in data.items():
+            field = getattr(cls, "__fields__", {}).get(k)
+            if field and _is_resource_dependency(field.annotation):
+                resources[k] = v
+            elif isinstance(v, ResourceDefinition):
+                resources[k] = v
+            else:
+                non_resources[k] = v
+        return SeparatedResourceParams(resources=resources, non_resources=non_resources)
+
+    def separate_resource_params(self, data: Dict[str, Any]) -> SeparatedResourceParams:
+        return self.__class__.separate_resource_params_on_cls(data)
 
 
 class ConfigurableResource(ConfigurableResourceFactory[TResValue]):
@@ -710,12 +731,16 @@ class PartialResource(
         data: Dict[str, Any],
         is_partial: bool = False,
     ):
-        resource_pointers, data_without_resources = separate_resource_params(self.__class__, data)
+        self._resource_cls = resource_cls
+        resource_pointers, data_without_resources = self.separate_resource_params(data)
 
         if not is_partial and data_without_resources:
+            resource_name = resource_cls.__name__
+            parameter_names = list(data_without_resources.keys())
             raise DagsterInvalidDefinitionError(
-                f"Resource {resource_cls.__name__} is not marked as partial, but was passed "
-                f"non-resource parameters: {list(data_without_resources.keys())}."
+                f"'{resource_name}.configure_at_launch' was called but non-resource parameters"
+                f" were passed: {parameter_names}. Did you mean to call '{resource_name}.partial'"
+                " instead?"
             )
 
         MakeConfigCacheable.__init__(self, data=data, resource_cls=resource_cls)  # type: ignore  # extends BaseModel, takes kwargs
@@ -743,8 +768,11 @@ class PartialResource(
             config_schema=curried_schema,
             description=resource_cls.__doc__,
         )
-
+        self._resource_cls = resource_cls
         self._nested_resources = {k: v for k, v in resource_pointers.items()}
+
+    def separate_resource_params(self, data: Dict[str, Any]) -> SeparatedResourceParams:
+        return self._resource_cls.separate_resource_params_on_cls(data)
 
     @property
     def nested_resources(self) -> Mapping[str, ResourceDefinition]:
@@ -1216,11 +1244,6 @@ def infer_schema_from_config_class(
     return Field(config=shape_cls(fields), description=description or docstring)
 
 
-class SeparatedResourceParams(NamedTuple):
-    resources: Dict[str, Any]
-    non_resources: Dict[str, Any]
-
-
 def _is_resource_dependency(typ: Type) -> bool:
     return (
         safe_is_subclass(typ, ResourceDependency)
@@ -1228,25 +1251,6 @@ def _is_resource_dependency(typ: Type) -> bool:
         or hasattr(typ, "__metadata__")
         and getattr(typ, "__metadata__") == ("resource_dependency",)
     )
-
-
-def separate_resource_params(
-    cls: Type[AllowDelayedDependencies], data: Dict[str, Any]
-) -> SeparatedResourceParams:
-    """Separates out the key/value inputs of fields in a structured config Resource class which
-    are themselves Resources and those which are not.
-    """
-    resources = {}
-    non_resources = {}
-    for k, v in data.items():
-        field = getattr(cls, "__fields__", {}).get(k)
-        if field and _is_resource_dependency(field.annotation):
-            resources[k] = v
-        elif isinstance(v, ResourceDefinition):
-            resources[k] = v
-        else:
-            non_resources[k] = v
-    return SeparatedResourceParams(resources=resources, non_resources=non_resources)
 
 
 def _call_resource_fn_with_default(obj: ResourceDefinition, context: InitResourceContext) -> Any:
