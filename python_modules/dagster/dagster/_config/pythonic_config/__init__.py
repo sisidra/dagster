@@ -195,7 +195,10 @@ def _recursively_apply_field_defaults(old_field: Field, additional_default_value
             sub_field.default_provided or not sub_field.is_required
             for sub_field in updated_sub_fields.values()
         ):
-            new_default = additional_default_values
+            new_default = {
+                **additional_default_values,
+                **{k: v.default_value for k, v in updated_sub_fields.items() if v.default_provided},
+            }
 
         return Field(
             config=old_field.config_type.__class__(fields=updated_sub_fields),
@@ -229,7 +232,9 @@ def _apply_defaults_to_schema_field(field: Field, additional_default_values: Any
 def copy_with_default(old_field: Field, new_config_value: Any) -> Field:
     return Field(
         config=old_field.config_type,
-        default_value=new_config_value,
+        default_value=old_field.default_value
+        if new_config_value == FIELD_NO_DEFAULT_PROVIDED and old_field.default_provided
+        else new_config_value,
         is_required=new_config_value == FIELD_NO_DEFAULT_PROVIDED and old_field.is_required,
         description=old_field.description,
     )
@@ -510,6 +515,7 @@ class ConfigurableResourceFactory(
         )
         self._resolved_config_dict = resolved_config_dict
         self._schema = schema
+        self._base_config_schema = DefinitionConfigSchema(schema)
 
         self._nested_resources = {k: v for k, v in resource_pointers.items()}
 
@@ -520,6 +526,10 @@ class ConfigurableResourceFactory(
         with @resource when using function-based resources.
         """
         raise NotImplementedError()
+
+    @property
+    def base_config_schema(self) -> DefinitionConfigSchema:
+        return self._base_config_schema
 
     @property
     def nested_resources(self) -> Mapping[str, ResourceDefinition]:
@@ -1221,7 +1231,7 @@ def _is_resource_dependency(typ: Type) -> bool:
 
 
 def separate_resource_params(
-    cls: Type[ConfigurableResourceFactory], data: Dict[str, Any]
+    cls: Type[AllowDelayedDependencies], data: Dict[str, Any]
 ) -> SeparatedResourceParams:
     """Separates out the key/value inputs of fields in a structured config Resource class which
     are themselves Resources and those which are not.
@@ -1229,7 +1239,7 @@ def separate_resource_params(
     resources = {}
     non_resources = {}
     for k, v in data.items():
-        field = cls.__fields__.get(k)
+        field = getattr(cls, "__fields__", {}).get(k)
         if field and _is_resource_dependency(field.annotation):
             resources[k] = v
         elif isinstance(v, ResourceDefinition):

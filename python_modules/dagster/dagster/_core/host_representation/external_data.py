@@ -1563,10 +1563,20 @@ def external_resource_data_from_def(
 ) -> ExternalResourceData:
     check.inst_param(resource_def, "resource_def", ResourceDefinition)
 
+    resource_type_def = resource_def
+    if isinstance(resource_type_def, ResourceWithKeyMapping):
+        resource_type_def = resource_type_def.wrapped_resource
+    resource_type = str(type(resource_type_def))[8:-2]
+
     # Once values on a resource object are bound, the config schema for those fields is no
     # longer visible. We walk up the list of parent schemas to find the base, unconfigured
     # schema so we can display all fields in the UI.
+    from dagster._config.pythonic_config import ConfigurableResourceFactory
+
     unconfigured_config_schema = resource_def.config_schema
+    if isinstance(resource_type_def, ConfigurableResourceFactory):
+        unconfigured_config_schema = resource_type_def.base_config_schema
+
     while (
         isinstance(unconfigured_config_schema, ConfiguredDefinitionConfigSchema)
         and unconfigured_config_schema.parent_def.config_schema
@@ -1575,7 +1585,6 @@ def external_resource_data_from_def(
 
     config_type = check.not_none(unconfigured_config_schema.config_type)
     unconfigured_config_type_snap = snap_from_config_type(config_type)
-
     config_schema_default = cast(
         Mapping[str, Any],
         json.loads(resource_def.config_schema.default_value_as_json_str)
@@ -1589,11 +1598,6 @@ def external_resource_data_from_def(
     configured_values = {
         k: external_resource_value_from_raw(v) for k, v in config_schema_default.items()
     }
-
-    resource_type_def = resource_def
-    if isinstance(resource_type_def, ResourceWithKeyMapping):
-        resource_type_def = resource_type_def.wrapped_resource
-    resource_type = str(type(resource_type_def))[8:-2]
 
     return ExternalResourceData(
         name=name,
