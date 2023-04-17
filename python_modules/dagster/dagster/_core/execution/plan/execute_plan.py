@@ -35,7 +35,9 @@ def inner_plan_execution_iterator(
     check.inst_param(execution_plan, "execution_plan", ExecutionPlan)
     compute_log_manager = job_context.instance.compute_log_manager
     step_keys = [step.key for step in execution_plan.get_steps_to_execute_in_topo_order()]
-    with execution_plan.start(retry_mode=job_context.retry_mode) as active_execution:
+    with execution_plan.start(
+        job_context.instance, retry_mode=job_context.retry_mode
+    ) as active_execution:
         with ExitStack() as capture_stack:
             # begin capturing logs for the whole process if this is a captured log manager
             if isinstance(compute_log_manager, CapturedLogManager):

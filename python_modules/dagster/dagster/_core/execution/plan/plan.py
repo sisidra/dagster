@@ -934,6 +934,7 @@ class ExecutionPlan(
 
     def start(
         self,
+        instance: DagsterInstance,
         retry_mode: RetryMode,
         sort_key_fn: Optional[Callable[[ExecutionStep], float]] = None,
         max_concurrent: Optional[int] = None,
@@ -942,6 +943,7 @@ class ExecutionPlan(
         from .active import ActiveExecution
 
         return ActiveExecution(
+            instance,
             self,
             retry_mode,
             sort_key_fn,
