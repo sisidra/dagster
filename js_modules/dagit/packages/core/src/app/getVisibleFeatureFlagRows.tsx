@@ -24,4 +24,8 @@ export const getVisibleFeatureFlagRows = () => [
     key: 'Experimental Runs table view with filtering',
     flagType: FeatureFlag.flagRunsTableFiltering,
   },
+  {
+    key: 'Experimental instance-level concurrency limits',
+    flagType: FeatureFlag.flagInstanceConcurrencyLimits,
+  },
 ];
