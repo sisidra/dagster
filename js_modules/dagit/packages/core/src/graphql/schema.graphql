@@ -2250,9 +2250,9 @@ type InstigationEvent {
 }
 
 type DynamicPartitionsRequestResult {
+  partitionKeys: [String!]
   partitionsDefName: String!
   type: DynamicPartitionsRequestType!
-  partitionKeys: [String!]!
   skippedPartitionKeys: [String!]!
 }
 

@@ -1062,7 +1062,7 @@ export type DynamicPartitionRequest = {
 
 export type DynamicPartitionsRequestResult = {
   __typename: 'DynamicPartitionsRequestResult';
-  partitionKeys: Array<Scalars['String']>;
+  partitionKeys: Maybe<Array<Scalars['String']>>;
   partitionsDefName: Scalars['String'];
   skippedPartitionKeys: Array<Scalars['String']>;
   type: DynamicPartitionsRequestType;
