@@ -76,10 +76,6 @@
             "path": "/concepts/assets/software-defined-assets"
           },
           {
-            "title": "Asset Materializations",
-            "path": "/concepts/assets/asset-materializations"
-          },
-          {
             "title": "Asset Observations",
             "path": "/concepts/assets/asset-observations"
           },
