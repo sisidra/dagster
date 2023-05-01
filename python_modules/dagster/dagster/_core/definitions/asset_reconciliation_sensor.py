@@ -2,6 +2,7 @@ import datetime
 import itertools
 import json
 from collections import defaultdict
+from enum import Enum
 from typing import (
     TYPE_CHECKING,
     AbstractSet,
@@ -46,6 +47,14 @@ from .utils import check_valid_name
 if TYPE_CHECKING:
     from dagster._core.instance import DagsterInstance, DynamicPartitionsStore
     from dagster._utils.caching_instance_queryer import CachingInstanceQueryer  # expensive import
+
+
+class AutoMaterializeReason(Enum):
+    FRESHNESS = "FRESHNESS"
+    DOWNSTREAM_FRESHNESS = "DOWNSTREAM_FRESHNESS"
+    MISSING = "MISSING"
+    UPSTREAM_DATA = "UPSTREAM_DATA"
+    UNKNOWN = "UNKNOWN"
 
 
 def get_implicit_auto_materialize_policy(
@@ -501,7 +510,7 @@ def find_never_materialized_or_requested_root_asset_partitions(
     )
 
 
-def determine_asset_partitions_to_reconcile(
+def determine_asset_partitions_to_auto_materialize(
     instance_queryer: "CachingInstanceQueryer",
     cursor: AssetReconciliationCursor,
     target_asset_keys: AbstractSet[AssetKey],
@@ -509,7 +518,7 @@ def determine_asset_partitions_to_reconcile(
     asset_graph: AssetGraph,
     current_time: datetime.datetime,
 ) -> Tuple[
-    AbstractSet[AssetKeyPartitionKey],
+    Mapping[AssetKeyPartitionKey, AutoMaterializeReason],
     AbstractSet[AssetKey],
     Mapping[AssetKey, AbstractSet[str]],
     Optional[int],
@@ -525,6 +534,8 @@ def determine_asset_partitions_to_reconcile(
         asset_graph=asset_graph,
         current_time=current_time,
     )
+
+    auto_materialize_reasons = {}
 
     # a filter for eliminating candidates
     def can_reconcile_candidate(candidate: AssetKeyPartitionKey) -> bool:
@@ -607,22 +618,23 @@ def determine_asset_partitions_to_reconcile(
 
         return True
 
-    def should_reconcile_candidate(candidate: AssetKeyPartitionKey) -> bool:
+    def auto_materialize_reason_for_candidate(
+        candidate: AssetKeyPartitionKey,
+    ) -> Optional[AutoMaterializeReason]:
         auto_materialize_policy = get_implicit_auto_materialize_policy(
             asset_graph=asset_graph, asset_key=candidate.asset_key
         )
         if auto_materialize_policy is None:
-            return False
-
-        return (
-            auto_materialize_policy.on_missing
-            and not instance_queryer.materialization_exists(asset_partition=candidate)
-        ) or (
-            auto_materialize_policy.on_new_parent_data
-            and not instance_queryer.is_reconciled(
-                asset_partition=candidate, asset_graph=asset_graph
-            )
-        )
+            return None
+        elif auto_materialize_policy.on_missing and not instance_queryer.materialization_exists(
+            asset_partition=candidate
+        ):
+            return AutoMaterializeReason.MISSING
+        elif auto_materialize_policy.on_new_parent_data and not instance_queryer.is_reconciled(
+            asset_partition=candidate, asset_graph=asset_graph
+        ):
+            return AutoMaterializeReason.UPSTREAM_DATA
+        return None
 
     def should_reconcile(
         asset_graph: AssetGraph,
@@ -640,12 +652,27 @@ def determine_asset_partitions_to_reconcile(
         ):
             return False
 
-        return all(
+        if all(
             parents_will_be_reconciled(asset_graph, candidate, to_reconcile)
             for candidate in candidates_unit
-        ) and any(should_reconcile_candidate(candidate) for candidate in candidates_unit)
+        ):
+            auto_materialize_reason = next(
+                filter(
+                    None,
+                    (
+                        auto_materialize_reason_for_candidate(candidate)
+                        for candidate in candidates_unit
+                    ),
+                ),
+                None,
+            )
+            if auto_materialize_reason:
+                for candidate in candidates_unit:
+                    auto_materialize_reasons[candidate] = auto_materialize_reason
+                return True
+        return False
 
-    to_reconcile = asset_graph.bfs_filter_asset_partitions(
+    to_reconcile_asset_partitions = asset_graph.bfs_filter_asset_partitions(
         instance_queryer,
         lambda candidates_unit, to_reconcile: should_reconcile(
             asset_graph, candidates_unit, to_reconcile
@@ -653,8 +680,12 @@ def determine_asset_partitions_to_reconcile(
         set(itertools.chain(never_materialized_or_requested_roots, stale_candidates)),
     )
 
+    for asset_partition in to_reconcile_asset_partitions:
+        if asset_partition not in auto_materialize_reasons:
+            assert False
+
     return (
-        to_reconcile,
+        auto_materialize_reasons,
         newly_materialized_root_asset_keys,
         newly_materialized_root_partitions_by_asset_key,
         latest_storage_id,
@@ -728,7 +759,7 @@ def determine_asset_partitions_to_reconcile_for_freshness(
     target_asset_keys: AbstractSet[AssetKey],
     target_asset_keys_and_parents: AbstractSet[AssetKey],
     current_time: datetime.datetime,
-) -> AbstractSet[AssetKeyPartitionKey]:
+) -> Mapping[AssetKeyPartitionKey, AutoMaterializeReason]:
     """Returns a set of AssetKeyPartitionKeys to materialize in order to abide by the given
     FreshnessPolicies, as well as a set of AssetKeyPartitionKeys which will be materialized at
     some point within the plan window.
@@ -738,7 +769,7 @@ def determine_asset_partitions_to_reconcile_for_freshness(
     from dagster._core.definitions.external_asset_graph import ExternalAssetGraph
 
     # now we have a full set of constraints, we can find solutions for them as we move down
-    to_materialize: Set[AssetKeyPartitionKey] = set()
+    to_materialize: Mapping[AssetKeyPartitionKey, AutoMaterializeReason] = {}
     waiting_to_materialize: Set[AssetKey] = set()
     expected_data_time_by_key: Dict[AssetKey, Optional[datetime.datetime]] = {}
 
@@ -821,11 +852,13 @@ def determine_asset_partitions_to_reconcile_for_freshness(
                 and expected_data_time is not None
                 and expected_data_time >= execution_period.start
             ):
-                to_materialize.add(asset_key_partition_key)
+                to_materialize[asset_key_partition_key] = AutoMaterializeReason.FRESHNESS
                 expected_data_time_by_key[key] = expected_data_time
                 # all required neighbors will be updated on the same tick
                 for required_key in asset_graph.get_required_multi_asset_keys(key):
-                    to_materialize.add(AssetKeyPartitionKey(required_key, None))
+                    to_materialize[
+                        (AssetKeyPartitionKey(required_key, None))
+                    ] = AutoMaterializeReason.FRESHNESS
             else:
                 # if downstream assets consume this, they should expect data time equal to the
                 # current time for this asset, as it's not going to be updated
@@ -840,7 +873,11 @@ def reconcile(
     instance: "DagsterInstance",
     cursor: AssetReconciliationCursor,
     run_tags: Optional[Mapping[str, str]],
-):
+) -> Tuple[
+    Sequence[RunRequest],
+    AssetReconciliationCursor,
+    Mapping[AssetKeyPartitionKey, AutoMaterializeReason],
+]:
     from dagster._utils.caching_instance_queryer import CachingInstanceQueryer  # expensive import
 
     current_time = pendulum.now("UTC")
@@ -878,7 +915,7 @@ def reconcile(
         newly_materialized_root_asset_keys,
         newly_materialized_root_partitions_by_asset_key,
         latest_storage_id,
-    ) = determine_asset_partitions_to_reconcile(
+    ) = determine_asset_partitions_to_auto_materialize(
         instance_queryer=instance_queryer,
         asset_graph=asset_graph,
         cursor=cursor,
@@ -888,17 +925,24 @@ def reconcile(
     )
 
     run_requests = build_run_requests(
-        asset_partitions_to_reconcile | asset_partitions_to_reconcile_for_freshness,
+        set(asset_partitions_to_reconcile.keys())
+        | set(asset_partitions_to_reconcile_for_freshness.keys()),
         asset_graph,
         run_tags,
     )
 
-    return run_requests, cursor.with_updates(
-        latest_storage_id=latest_storage_id,
-        run_requests=run_requests,
-        asset_graph=asset_graph,
-        newly_materialized_root_asset_keys=newly_materialized_root_asset_keys,
-        newly_materialized_root_partitions_by_asset_key=newly_materialized_root_partitions_by_asset_key,
+    all_reasons = {**asset_partitions_to_reconcile, **asset_partitions_to_reconcile_for_freshness}
+
+    return (
+        run_requests,
+        cursor.with_updates(
+            latest_storage_id=latest_storage_id,
+            run_requests=run_requests,
+            asset_graph=asset_graph,
+            newly_materialized_root_asset_keys=newly_materialized_root_asset_keys,
+            newly_materialized_root_partitions_by_asset_key=newly_materialized_root_partitions_by_asset_key,
+        ),
+        all_reasons,
     )
 
 
@@ -1088,7 +1132,7 @@ def build_asset_reconciliation_sensor(
                 ),
             )
 
-        run_requests, updated_cursor = reconcile(
+        run_requests, updated_cursor, _ = reconcile(
             asset_graph=asset_graph,
             target_asset_keys=target_asset_keys,
             instance=context.instance,
