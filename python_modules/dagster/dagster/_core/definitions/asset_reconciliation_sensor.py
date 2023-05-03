@@ -753,7 +753,7 @@ def get_execution_period_for_policies(
     return merged_period
 
 
-def determine_asset_partitions_to_reconcile_for_freshness(
+def determine_asset_partitions_to_auto_materialize_for_freshness(
     data_time_resolver: "CachingDataTimeResolver",
     asset_graph: AssetGraph,
     target_asset_keys: AbstractSet[AssetKey],
@@ -899,7 +899,7 @@ def reconcile(
     )
 
     asset_partitions_to_reconcile_for_freshness = (
-        determine_asset_partitions_to_reconcile_for_freshness(
+        determine_asset_partitions_to_auto_materialize_for_freshness(
             data_time_resolver=CachingDataTimeResolver(
                 instance_queryer=instance_queryer, asset_graph=asset_graph
             ),
