@@ -4,6 +4,8 @@ from dagster import (
     AssetSelection,
     SourceAsset,
 )
+from dagster._core.definitions.asset_reconciliation_sensor import PositiveAutoMaterializeReason
+from dagster._core.definitions.events import AssetKey, AssetKeyPartitionKey
 from dagster._core.definitions.freshness_policy import FreshnessPolicy
 from dagster._seven.compat.pendulum import create_pendulum_time
 
@@ -199,6 +201,10 @@ freshness_policy_scenarios = {
         evaluation_delta=datetime.timedelta(minutes=35),
         # now that it's been awhile since that run failed, give it another attempt
         expected_run_requests=[run_request(asset_keys=["asset1", "asset2", "asset3", "asset4"])],
+        expected_auto_materialize_reasons={
+            AssetKeyPartitionKey(AssetKey(f"asset{i}")): {PositiveAutoMaterializeReason.FRESHNESS}
+            for i in range(1, 5)
+        },
     ),
     "freshness_root_failure": AssetReconciliationScenario(
         assets=diamond_freshness,

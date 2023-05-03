@@ -4,7 +4,7 @@ import itertools
 import os
 import random
 import sys
-from typing import Iterable, List, Mapping, NamedTuple, Optional, Sequence, Set, Union
+from typing import AbstractSet, Iterable, List, Mapping, NamedTuple, Optional, Sequence, Set, Union
 
 import mock
 import pendulum
@@ -77,7 +77,7 @@ class AssetReconciliationScenario(NamedTuple):
     expected_run_requests: Optional[Sequence[RunRequest]] = None
     code_locations: Optional[Mapping[str, Sequence[Union[SourceAsset, AssetsDefinition]]]] = None
     expected_auto_materialize_reasons: Optional[
-        Mapping[AssetKeyPartitionKey, AutoMaterializeReason]
+        Mapping[AssetKeyPartitionKey, AbstractSet[AutoMaterializeReason]]
     ] = None
 
     def _get_code_location_origin(
