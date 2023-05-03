@@ -50,11 +50,19 @@ if TYPE_CHECKING:
 
 
 class AutoMaterializeReason(Enum):
+    pass
+
+
+class PositiveAutoMaterializeReason(AutoMaterializeReason):
     FRESHNESS = "FRESHNESS"
     DOWNSTREAM_FRESHNESS = "DOWNSTREAM_FRESHNESS"
+    PARENT_UPDATED = "PARENT_UPDATED"
+    PARENT_WILL_UPDATE = "PARENT_WILL_UPDATE"
     MISSING = "MISSING"
-    UPSTREAM_DATA = "UPSTREAM_DATA"
-    UNKNOWN = "UNKNOWN"
+
+
+class NegativeAutoMaterializeReason(AutoMaterializeReason):
+    PARENT_UNRECONCILED = "PARENT_UNRECONCILED"
 
 
 def get_implicit_auto_materialize_policy(
@@ -518,7 +526,7 @@ def determine_asset_partitions_to_auto_materialize(
     asset_graph: AssetGraph,
     current_time: datetime.datetime,
 ) -> Tuple[
-    Mapping[AssetKeyPartitionKey, AutoMaterializeReason],
+    Mapping[AssetKeyPartitionKey, AbstractSet[AutoMaterializeReason]],
     AbstractSet[AssetKey],
     Mapping[AssetKey, AbstractSet[str]],
     Optional[int],
@@ -535,7 +543,7 @@ def determine_asset_partitions_to_auto_materialize(
         current_time=current_time,
     )
 
-    auto_materialize_reasons = {}
+    reasons: Mapping[AssetKeyPartitionKey, Set[AutoMaterializeReason]] = defaultdict(set)
 
     # a filter for eliminating candidates
     def can_reconcile_candidate(candidate: AssetKeyPartitionKey) -> bool:
@@ -629,11 +637,11 @@ def determine_asset_partitions_to_auto_materialize(
         elif auto_materialize_policy.on_missing and not instance_queryer.materialization_exists(
             asset_partition=candidate
         ):
-            return AutoMaterializeReason.MISSING
+            return PositiveAutoMaterializeReason.MISSING
         elif auto_materialize_policy.on_new_parent_data and not instance_queryer.is_reconciled(
             asset_partition=candidate, asset_graph=asset_graph
         ):
-            return AutoMaterializeReason.UPSTREAM_DATA
+            return PositiveAutoMaterializeReason.PARENT_UPDATED
         return None
 
     def should_reconcile(
@@ -668,8 +676,11 @@ def determine_asset_partitions_to_auto_materialize(
             )
             if auto_materialize_reason:
                 for candidate in candidates_unit:
-                    auto_materialize_reasons[candidate] = auto_materialize_reason
+                    reasons[candidate].add(auto_materialize_reason)
                 return True
+        else:
+            for candidate in candidates_unit:
+                reasons[candidate].add(NegativeAutoMaterializeReason.PARENT_UNRECONCILED)
         return False
 
     to_reconcile_asset_partitions = asset_graph.bfs_filter_asset_partitions(
@@ -680,12 +691,17 @@ def determine_asset_partitions_to_auto_materialize(
         set(itertools.chain(never_materialized_or_requested_roots, stale_candidates)),
     )
 
-    for asset_partition in to_reconcile_asset_partitions:
-        if asset_partition not in auto_materialize_reasons:
-            assert False
+    check.invariant(
+        to_reconcile_asset_partitions
+        == {
+            asset_partition
+            for asset_partition, reasons in reasons.items()
+            if all(isinstance(reason, PositiveAutoMaterializeReason) for reason in reasons)
+        }
+    )
 
     return (
-        auto_materialize_reasons,
+        reasons,
         newly_materialized_root_asset_keys,
         newly_materialized_root_partitions_by_asset_key,
         latest_storage_id,
@@ -759,7 +775,7 @@ def determine_asset_partitions_to_auto_materialize_for_freshness(
     target_asset_keys: AbstractSet[AssetKey],
     target_asset_keys_and_parents: AbstractSet[AssetKey],
     current_time: datetime.datetime,
-) -> Mapping[AssetKeyPartitionKey, AutoMaterializeReason]:
+) -> Mapping[AssetKeyPartitionKey, AbstractSet[AutoMaterializeReason]]:
     """Returns a set of AssetKeyPartitionKeys to materialize in order to abide by the given
     FreshnessPolicies, as well as a set of AssetKeyPartitionKeys which will be materialized at
     some point within the plan window.
@@ -769,7 +785,12 @@ def determine_asset_partitions_to_auto_materialize_for_freshness(
     from dagster._core.definitions.external_asset_graph import ExternalAssetGraph
 
     # now we have a full set of constraints, we can find solutions for them as we move down
-    to_materialize: Mapping[AssetKeyPartitionKey, AutoMaterializeReason] = {}
+    positive_reasons: Mapping[
+        AssetKeyPartitionKey, Set[PositiveAutoMaterializeReason]
+    ] = defaultdict(set)
+    negative_reasons: Mapping[
+        AssetKeyPartitionKey, Set[NegativeAutoMaterializeReason]
+    ] = defaultdict(set)
     waiting_to_materialize: Set[AssetKey] = set()
     expected_data_time_by_key: Dict[AssetKey, Optional[datetime.datetime]] = {}
 
@@ -794,7 +815,7 @@ def determine_asset_partitions_to_auto_materialize_for_freshness(
             if isinstance(asset_graph, ExternalAssetGraph):
                 repo = asset_graph.get_repository_handle(key)
                 if any(
-                    AssetKeyPartitionKey(p, None) in to_materialize
+                    AssetKeyPartitionKey(p, None) in positive_reasons
                     and asset_graph.get_repository_handle(p) is not repo
                     for p in parents
                 ):
@@ -844,7 +865,7 @@ def determine_asset_partitions_to_auto_materialize_for_freshness(
             # a key may already be in to_materialize by the time we get here if a required
             # neighbor was selected to be updated
             asset_key_partition_key = AssetKeyPartitionKey(key, None)
-            if asset_key_partition_key in to_materialize:
+            if asset_key_partition_key in positive_reasons:
                 expected_data_time_by_key[key] = expected_data_time
             elif (
                 execution_period is not None
@@ -852,19 +873,21 @@ def determine_asset_partitions_to_auto_materialize_for_freshness(
                 and expected_data_time is not None
                 and expected_data_time >= execution_period.start
             ):
-                to_materialize[asset_key_partition_key] = AutoMaterializeReason.FRESHNESS
+                positive_reasons[asset_key_partition_key].add(
+                    PositiveAutoMaterializeReason.FRESHNESS
+                )
                 expected_data_time_by_key[key] = expected_data_time
                 # all required neighbors will be updated on the same tick
                 for required_key in asset_graph.get_required_multi_asset_keys(key):
-                    to_materialize[
-                        (AssetKeyPartitionKey(required_key, None))
-                    ] = AutoMaterializeReason.FRESHNESS
+                    positive_reasons[(AssetKeyPartitionKey(required_key, None))].add(
+                        PositiveAutoMaterializeReason.FRESHNESS
+                    )
             else:
                 # if downstream assets consume this, they should expect data time equal to the
                 # current time for this asset, as it's not going to be updated
                 expected_data_time_by_key[key] = current_data_time
 
-    return to_materialize
+    return {**positive_reasons, **negative_reasons}
 
 
 def reconcile(
@@ -876,7 +899,7 @@ def reconcile(
 ) -> Tuple[
     Sequence[RunRequest],
     AssetReconciliationCursor,
-    Mapping[AssetKeyPartitionKey, AutoMaterializeReason],
+    Mapping[AssetKeyPartitionKey, AbstractSet[AutoMaterializeReason]],
 ]:
     from dagster._utils.caching_instance_queryer import CachingInstanceQueryer  # expensive import
 
@@ -898,20 +921,8 @@ def reconcile(
         target_asset_keys_and_parents_list, after_cursor=cursor.latest_storage_id
     )
 
-    asset_partitions_to_reconcile_for_freshness = (
-        determine_asset_partitions_to_auto_materialize_for_freshness(
-            data_time_resolver=CachingDataTimeResolver(
-                instance_queryer=instance_queryer, asset_graph=asset_graph
-            ),
-            asset_graph=asset_graph,
-            target_asset_keys=target_asset_keys,
-            target_asset_keys_and_parents=target_asset_keys_and_parents,
-            current_time=current_time,
-        )
-    )
-
     (
-        asset_partitions_to_reconcile,
+        auto_materialize_reasons,
         newly_materialized_root_asset_keys,
         newly_materialized_root_partitions_by_asset_key,
         latest_storage_id,
@@ -924,14 +935,31 @@ def reconcile(
         current_time=current_time,
     )
 
+    auto_materialize_reasons_for_freshness = (
+        determine_asset_partitions_to_auto_materialize_for_freshness(
+            data_time_resolver=CachingDataTimeResolver(
+                instance_queryer=instance_queryer, asset_graph=asset_graph
+            ),
+            asset_graph=asset_graph,
+            target_asset_keys=target_asset_keys,
+            target_asset_keys_and_parents=target_asset_keys_and_parents,
+            current_time=current_time,
+        )
+    )
+
+    reasons = {**auto_materialize_reasons}
+    for key, reason in auto_materialize_reasons_for_freshness.items():
+        reasons[key] = reasons.get(key, set()) | reason
+
     run_requests = build_run_requests(
-        set(asset_partitions_to_reconcile.keys())
-        | set(asset_partitions_to_reconcile_for_freshness.keys()),
+        {
+            key
+            for key, reasons in reasons.items()
+            if all(isinstance(r, PositiveAutoMaterializeReason) for r in reasons)
+        },
         asset_graph,
         run_tags,
     )
-
-    all_reasons = {**asset_partitions_to_reconcile, **asset_partitions_to_reconcile_for_freshness}
 
     return (
         run_requests,
@@ -942,7 +970,7 @@ def reconcile(
             newly_materialized_root_asset_keys=newly_materialized_root_asset_keys,
             newly_materialized_root_partitions_by_asset_key=newly_materialized_root_partitions_by_asset_key,
         ),
-        all_reasons,
+        reasons,
     )
 
 

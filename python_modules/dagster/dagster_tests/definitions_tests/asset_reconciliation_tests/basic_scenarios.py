@@ -1,4 +1,4 @@
-from dagster._core.definitions.asset_reconciliation_sensor import AutoMaterializeReason
+from dagster._core.definitions.asset_reconciliation_sensor import PositiveAutoMaterializeReason
 from dagster._core.definitions.events import AssetKey, AssetKeyPartitionKey
 
 from .asset_reconciliation_scenario import (
@@ -71,7 +71,7 @@ basic_scenarios = {
         unevaluated_runs=[],
         expected_run_requests=[run_request(asset_keys=["asset1"])],
         expected_auto_materialize_reasons={
-            AssetKeyPartitionKey(AssetKey("asset1")): AutoMaterializeReason.MISSING
+            AssetKeyPartitionKey(AssetKey("asset1")): {PositiveAutoMaterializeReason.MISSING}
         },
     ),
     "two_assets_in_sequence_never_materialized": AssetReconciliationScenario(
@@ -79,8 +79,8 @@ basic_scenarios = {
         unevaluated_runs=[],
         expected_run_requests=[run_request(asset_keys=["asset1", "asset2"])],
         expected_auto_materialize_reasons={
-            AssetKeyPartitionKey(AssetKey("asset1")): AutoMaterializeReason.MISSING,
-            AssetKeyPartitionKey(AssetKey("asset2")): AutoMaterializeReason.MISSING,
+            AssetKeyPartitionKey(AssetKey("asset1")): {PositiveAutoMaterializeReason.MISSING},
+            AssetKeyPartitionKey(AssetKey("asset2")): {PositiveAutoMaterializeReason.MISSING},
         },
     ),
     "one_asset_already_launched": AssetReconciliationScenario(
@@ -97,7 +97,7 @@ basic_scenarios = {
         unevaluated_runs=[single_asset_run(asset_key="asset1")],
         expected_run_requests=[run_request(asset_keys=["asset2"])],
         expected_auto_materialize_reasons={
-            AssetKeyPartitionKey(AssetKey("asset2")): AutoMaterializeReason.MISSING
+            AssetKeyPartitionKey(AssetKey("asset2")): {PositiveAutoMaterializeReason.MISSING},
         },
     ),
     "parent_materialized_launch_two_children": AssetReconciliationScenario(
@@ -105,8 +105,8 @@ basic_scenarios = {
         unevaluated_runs=[single_asset_run(asset_key="asset1")],
         expected_run_requests=[run_request(asset_keys=["asset2", "asset3"])],
         expected_auto_materialize_reasons={
-            AssetKeyPartitionKey(AssetKey("asset2")): AutoMaterializeReason.MISSING,
-            AssetKeyPartitionKey(AssetKey("asset3")): AutoMaterializeReason.MISSING,
+            AssetKeyPartitionKey(AssetKey("asset2")): {PositiveAutoMaterializeReason.MISSING},
+            AssetKeyPartitionKey(AssetKey("asset3")): {PositiveAutoMaterializeReason.MISSING},
         },
     ),
     "parent_materialized_with_source_asset_launch_child": AssetReconciliationScenario(
@@ -122,7 +122,7 @@ basic_scenarios = {
         unevaluated_runs=[single_asset_run(asset_key="asset1")],
         expected_run_requests=[run_request(asset_keys=["asset2"])],
         expected_auto_materialize_reasons={
-            AssetKeyPartitionKey(AssetKey("asset2")): AutoMaterializeReason.UPSTREAM_DATA,
+            AssetKeyPartitionKey(AssetKey("asset2")): {PositiveAutoMaterializeReason.PARENT_UPDATED}
         },
     ),
     "parent_rematerialized": AssetReconciliationScenario(
@@ -138,8 +138,8 @@ basic_scenarios = {
         unevaluated_runs=[single_asset_run(asset_key="parent1")],
         expected_run_requests=[run_request(asset_keys=["parent2", "child"])],
         expected_auto_materialize_reasons={
-            AssetKeyPartitionKey(AssetKey("parent2")): AutoMaterializeReason.MISSING,
-            AssetKeyPartitionKey(AssetKey("child")): AutoMaterializeReason.MISSING,
+            AssetKeyPartitionKey(AssetKey("parent2")): {PositiveAutoMaterializeReason.MISSING},
+            AssetKeyPartitionKey(AssetKey("child")): {PositiveAutoMaterializeReason.MISSING},
         },
     ),
     "one_parent_materialized_others_materialized_before": AssetReconciliationScenario(
@@ -151,7 +151,7 @@ basic_scenarios = {
         ),
         expected_run_requests=[run_request(asset_keys=["child"])],
         expected_auto_materialize_reasons={
-            AssetKeyPartitionKey(AssetKey("child")): AutoMaterializeReason.UPSTREAM_DATA,
+            AssetKeyPartitionKey(AssetKey("child")): {PositiveAutoMaterializeReason.PARENT_UPDATED}
         },
     ),
     "diamond_never_materialized": AssetReconciliationScenario(
@@ -173,9 +173,15 @@ basic_scenarios = {
         ),
         expected_run_requests=[run_request(asset_keys=["asset2", "asset3", "asset4"])],
         expected_auto_materialize_reasons={
-            AssetKeyPartitionKey(AssetKey("asset2")): AutoMaterializeReason.UPSTREAM_DATA,
-            AssetKeyPartitionKey(AssetKey("asset3")): AutoMaterializeReason.UPSTREAM_DATA,
-            AssetKeyPartitionKey(AssetKey("asset4")): AutoMaterializeReason.UPSTREAM_DATA,
+            AssetKeyPartitionKey(AssetKey("asset2")): {
+                PositiveAutoMaterializeReason.PARENT_UPDATED
+            },
+            AssetKeyPartitionKey(AssetKey("asset3")): {
+                PositiveAutoMaterializeReason.PARENT_UPDATED
+            },
+            AssetKeyPartitionKey(AssetKey("asset4")): {
+                PositiveAutoMaterializeReason.PARENT_UPDATED
+            },
         },
     ),
     "diamond_root_and_one_in_middle_rematerialized": AssetReconciliationScenario(
