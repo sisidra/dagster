@@ -202,8 +202,16 @@ freshness_policy_scenarios = {
         # now that it's been awhile since that run failed, give it another attempt
         expected_run_requests=[run_request(asset_keys=["asset1", "asset2", "asset3", "asset4"])],
         expected_auto_materialize_reasons={
-            AssetKeyPartitionKey(AssetKey(f"asset{i}")): {PositiveAutoMaterializeReason.FRESHNESS}
-            for i in range(1, 5)
+            AssetKeyPartitionKey(AssetKey("asset1")): {
+                PositiveAutoMaterializeReason.DOWNSTREAM_FRESHNESS
+            },
+            AssetKeyPartitionKey(AssetKey("asset2")): {
+                PositiveAutoMaterializeReason.DOWNSTREAM_FRESHNESS
+            },
+            AssetKeyPartitionKey(AssetKey("asset3")): {
+                PositiveAutoMaterializeReason.DOWNSTREAM_FRESHNESS
+            },
+            AssetKeyPartitionKey(AssetKey("asset4")): {PositiveAutoMaterializeReason.FRESHNESS},
         },
     ),
     "freshness_root_failure": AssetReconciliationScenario(
@@ -321,6 +329,12 @@ freshness_policy_scenarios = {
         unevaluated_runs=[run([f"asset{i}" for i in range(1, 6)])],
         evaluation_delta=datetime.timedelta(minutes=35),
         expected_run_requests=[run_request(asset_keys=["asset2", "asset5"])],
+        expected_auto_materialize_reasons={
+            AssetKeyPartitionKey(AssetKey("asset2")): {
+                PositiveAutoMaterializeReason.DOWNSTREAM_FRESHNESS
+            },
+            AssetKeyPartitionKey(AssetKey("asset5")): {PositiveAutoMaterializeReason.FRESHNESS},
+        },
     ),
     "freshness_complex_subsettable": AssetReconciliationScenario(
         assets=subsettable_multi_asset_complex,

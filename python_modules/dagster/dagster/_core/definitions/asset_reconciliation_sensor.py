@@ -740,22 +740,24 @@ def get_execution_period_for_policy(
         )
 
 
-def get_execution_period_for_policies(
+def get_execution_period_and_reasons_for_policies(
+    local_policy: Optional[FreshnessPolicy],
     policies: AbstractSet[FreshnessPolicy],
     effective_data_time: Optional[datetime.datetime],
     current_time: datetime.datetime,
-) -> Optional[pendulum.Period]:
+) -> Tuple[Optional[pendulum.Period], AbstractSet[PositiveAutoMaterializeReason]]:
     """Determines a range of times for which you can kick off an execution of this asset to solve
     the most pressing constraint, alongside a maximum number of additional constraints.
     """
     merged_period = None
-    for period in sorted(
+    reasons = set()
+    for period, policy in sorted(
         (
-            get_execution_period_for_policy(policy, effective_data_time, current_time)
+            (get_execution_period_for_policy(policy, effective_data_time, current_time), policy)
             for policy in policies
         ),
         # sort execution periods by most pressing
-        key=lambda period: period.end,
+        key=lambda pp: pp[0].end,
     ):
         if merged_period is None:
             merged_period = period
@@ -767,7 +769,12 @@ def get_execution_period_for_policies(
         else:
             break
 
-    return merged_period
+        if policy == local_policy:
+            reasons.add(PositiveAutoMaterializeReason.FRESHNESS)
+        else:
+            reasons.add(PositiveAutoMaterializeReason.DOWNSTREAM_FRESHNESS)
+
+    return merged_period, reasons
 
 
 def determine_asset_partitions_to_auto_materialize_for_freshness(
@@ -850,13 +857,14 @@ def determine_asset_partitions_to_auto_materialize_for_freshness(
 
                 # figure out a time period that you can execute this asset within to solve a maximum
                 # number of constraints
-                execution_period = get_execution_period_for_policies(
+                execution_period, execution_reasons = get_execution_period_and_reasons_for_policies(
+                    local_policy=asset_graph.freshness_policies_by_key.get(key),
                     policies=asset_graph.get_downstream_freshness_policies(asset_key=key),
                     effective_data_time=effective_data_time,
                     current_time=current_time,
                 )
             else:
-                execution_period = None
+                execution_period, execution_reasons = None, set()
 
             # a key may already be in to_materialize by the time we get here if a required
             # neighbor was selected to be updated
@@ -869,7 +877,7 @@ def determine_asset_partitions_to_auto_materialize_for_freshness(
                 and expected_data_time is not None
                 and expected_data_time >= execution_period.start
             ):
-                reasons[asset_key_partition_key].add(PositiveAutoMaterializeReason.FRESHNESS)
+                reasons[asset_key_partition_key].update(execution_reasons)
                 expected_data_time_by_key[key] = expected_data_time
                 # all required neighbors will be updated on the same tick
                 for required_key in asset_graph.get_required_multi_asset_keys(key):
