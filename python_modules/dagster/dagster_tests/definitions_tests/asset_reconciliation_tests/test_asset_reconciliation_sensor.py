@@ -11,6 +11,7 @@ from dagster import (
     repository,
 )
 from dagster._check import CheckError
+from dagster._core.definitions.events import AssetKey, AssetKeyPartitionKey
 from dagster._core.definitions.time_window_partitions import (
     HourlyPartitionsDefinition,
 )
@@ -26,10 +27,26 @@ from .scenarios import ASSET_RECONCILIATION_SCENARIOS
 )
 def test_reconciliation(scenario):
     instance = DagsterInstance.ephemeral()
-    run_requests, _, reasons = scenario.do_sensor_scenario(instance)
+    run_requests, _, materialize_reasons, skip_reasons = scenario.do_sensor_scenario(instance)
 
-    if scenario.expected_auto_materialize_reasons:
-        assert reasons == scenario.expected_auto_materialize_reasons
+    if scenario.expected_materialize_reasons:
+        assert materialize_reasons == {
+            (
+                AssetKeyPartitionKey(AssetKey.from_coerceable(key[0]), key[1])
+                if isinstance(key, tuple)
+                else AssetKeyPartitionKey(AssetKey.from_coerceable(key))
+            ): reason
+            for key, reason in scenario.expected_materialize_reasons.items()
+        }
+    if scenario.expected_skip_reasons:
+        assert skip_reasons == {
+            (
+                AssetKeyPartitionKey(AssetKey.from_coerceable(key[0]), key[1])
+                if isinstance(key, tuple)
+                else AssetKeyPartitionKey(AssetKey.from_coerceable(key))
+            )
+            for key, reason in scenario.expected_skip_reasons.items()
+        }
 
     assert len(run_requests) == len(scenario.expected_run_requests)
 
@@ -56,7 +73,7 @@ def test_reconciliation_no_tags(scenario):
     # simulates an environment where asset_event_tags cannot be added
     instance = DagsterInstance.ephemeral()
 
-    run_requests, _, _ = scenario.do_sensor_scenario(instance)
+    run_requests, _, _, _ = scenario.do_sensor_scenario(instance)
 
     assert len(run_requests) == len(scenario.expected_run_requests)
 
@@ -124,7 +141,7 @@ def test_bad_partition_key():
     scenario = AssetReconciliationScenario(
         assets=assets, unevaluated_runs=[], asset_selection=AssetSelection.keys("hourly2")
     )
-    run_requests, _, _ = scenario.do_sensor_scenario(instance)
+    run_requests, _, _, _ = scenario.do_sensor_scenario(instance)
     assert len(run_requests) == 0
 
 
